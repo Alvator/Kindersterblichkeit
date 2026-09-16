@@ -1,0 +1,74 @@
+# Pakete laden
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+# --- CSV einlesen ---
+# Falls die ersten Zeilen nur Info enthalten, z.B. 4 Zeilen überspringen
+fertility_data <- read_csv("fertility_data.csv", skip = 4, show_col_types = FALSE)
+
+# --- Spalten für die Jahre automatisch erkennen ---
+year_cols <- colnames(fertility_data)[grepl("^20[0-9]{2}$", colnames(fertility_data))]
+if(length(year_cols) == 0){
+  stop("Keine Jahres-Spalten gefunden. Prüfe die CSV-Datei!")
+}
+
+# --- Daten ins long format transformieren ---
+fertility_long <- fertility_data %>%
+  pivot_longer(
+    cols = all_of(year_cols),
+    names_to = "year",
+    values_to = "fertility_rate"
+  ) %>%
+  rename(country = `Country Name`) %>%
+  mutate(year = as.numeric(year)) %>%
+  filter(!is.na(fertility_rate))
+
+# --- Weltkarten-Daten ---
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Länderangaben angleichen
+fertility_long$country <- tolower(fertility_long$country)
+world$admin <- tolower(world$admin)
+
+# --- Shiny UI ---
+ui <- fluidPage(
+  titlePanel("Globale Fertilitätsraten Weltkarte 2009–2023"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("year", "Wählen Sie ein Jahr:",
+                  min = 2009, max = 2023, value = 2009, step = 1,
+                  animate = TRUE)
+    ),
+    mainPanel(
+      plotOutput("mapPlot", height = "700px")
+    )
+  )
+)
+
+# --- Shiny Server ---
+server <- function(input, output) {
+  output$mapPlot <- renderPlot({
+    data_year <- fertility_long %>% filter(year == input$year)
+    
+    # Merge Karte + Fertilitätsdaten
+    map_data <- world %>%
+      left_join(data_year, by = c("admin" = "country"))
+    
+    # Plot erstellen
+    ggplot(map_data) +
+      geom_sf(aes(fill = fertility_rate), color = "gray70") +
+      scale_fill_gradient(low = "blue", high = "red", na.value = "lightgray") +
+      labs(title = paste("Fertilitätsraten im Jahr", input$year),
+           fill = "Kinder pro Frau") +
+      theme_minimal()
+  })
+}
+
+# --- App starten ---
+shinyApp(ui = ui, server = server)
